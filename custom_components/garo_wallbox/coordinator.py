@@ -107,8 +107,9 @@ class GaroDeviceCoordinator(DataUpdateCoordinator[int]):
         product_id = self._config.product_id if charger.serial_number == self._config.master_charger.serial_number else charger.product_id
         return PRODUCT_MAP[product_id] if product_id in PRODUCT_MAP else GaroProductInfo('Unknown')
 
+    def get_selected_mode(self, status: GaroStatus) -> str:
+        return status.selected_mode.value if self.limiter and self.limiter.limit else status.mode.value
 
-       
     async def async_enable_charge_limit(self, enable: bool):
         await self._api_client.async_enable_charge_limit(enable)
         self._config = await self._api_client.async_get_configuration()

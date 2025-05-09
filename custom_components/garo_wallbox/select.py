@@ -36,7 +36,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GaroConfigEntry, async_a
             icon="mdi:ev-station",
             options=[opt.value for opt in const.Mode],
             set_option=lambda option: coordinator.async_set_mode(const.Mode(option)),
-            get_current_option=lambda status: status.selected_mode.value
+            get_current_option=lambda status: coordinator.get_selected_mode(status)
         ),
     ]
     if config.has_outlet:

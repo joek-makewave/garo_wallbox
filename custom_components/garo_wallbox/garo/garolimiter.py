@@ -38,6 +38,10 @@ class GaroLimiter:
         self._minute = 0
         self._mode_off_minute = None
 
+    @property
+    def limit(self) -> bool:
+        return self._limit
+
     def is_initialized(self) -> bool:
         return self._mode and self._current_limit and self._prediction
 
