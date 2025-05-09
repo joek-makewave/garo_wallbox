@@ -2,13 +2,11 @@ from typing import Callable, Awaitable
 from dataclasses import dataclass
 
 from homeassistant.core import HomeAssistant
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
 
 from .garo import GaroStatus, const, GaroCharger
 from .coordinator import GaroDeviceCoordinator
 from .base import GaroEntity
-from .const import DOMAIN,COORDINATOR
 from . import GaroConfigEntry
 
 @dataclass(frozen=True, kw_only=True)
@@ -28,17 +26,17 @@ class GaroChargerSelectEntityDescription(SelectEntityDescription):
 async def async_setup_entry(hass: HomeAssistant, entry: GaroConfigEntry, async_add_entities):
     """Set up using config_entry."""
     coordinator = entry.runtime_data.coordinator
-    api_client = coordinator.api_client
     config = coordinator.config
     descriptions = [
+        # this controls the selected mode
         GaroSelectEntityDescription(
             key="sensor",
             translation_key="sensor",
             name=coordinator.main_charger_name,
             icon="mdi:ev-station",
             options=[opt.value for opt in const.Mode],
-            set_option=lambda option: coordinator.async_set_mode(option),
-            get_current_option=lambda status: status.mode.value
+            set_option=lambda option: coordinator.async_set_mode(const.Mode(option)),
+            get_current_option=lambda status: status.selected_mode.value
         ),
     ]
     if config.has_outlet:
@@ -101,6 +99,7 @@ class GaroSelectEntity(GaroEntity, SelectEntity):
         self.async_write_ha_state()
 
     def _async_update_attrs(self) -> None:
+        #TODO, what is current_option?
         self.current_option = self.entity_description.get_current_option(self.coordinator.status)
 
 class GaroChargerSelectEntity(GaroEntity, SelectEntity):
@@ -123,4 +122,5 @@ class GaroChargerSelectEntity(GaroEntity, SelectEntity):
         self.async_write_ha_state()
 
     def _async_update_attrs(self) -> None:
+        #TODO, what is current_option?
         self.current_option = self.entity_description.get_current_option(self._charger)

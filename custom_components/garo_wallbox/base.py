@@ -1,7 +1,6 @@
 from abc import abstractmethod
 
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.helpers.entity import DeviceInfo
 from .coordinator import GaroDeviceCoordinator, GaroMeterCoordinator
 from .garo import GaroCharger, GaroMeter
 

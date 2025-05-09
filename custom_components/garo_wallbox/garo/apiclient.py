@@ -1,3 +1,5 @@
+from typing import Callable
+
 import aiohttp
 import logging
 import time
@@ -60,23 +62,25 @@ class ApiClient:
                 slaves.append(GaroCharger(d))
         return slaves
     
-    async def async_get_external_meter(self, meter: GaroMeter | None = None) -> GaroMeter:        
-        return await self._async_get_meter('meterinfo/EXTERNAL', meter)
+    async def async_get_external_meter(self, meter: GaroMeter | None, get_voltage: Callable[[], int]) -> GaroMeter:
+        return await self._async_get_meter('meterinfo/EXTERNAL', meter, get_voltage)
     
-    async def async_get_central100_meter(self, meter: GaroMeter | None = None) -> GaroMeter:
-        return await self._async_get_meter('meterinfo/CENTRAL100', meter)
+    async def async_get_central100_meter(self, meter: GaroMeter | None, get_voltage: Callable[[], int]) -> GaroMeter:
+        return await self._async_get_meter('meterinfo/CENTRAL100', meter, get_voltage)
     
-    async def async_get_central101_meter(self, meter: GaroMeter | None = None) -> GaroMeter:
-        return await self._async_get_meter('meterinfo/CENTRAL101', meter)
+    async def async_get_central101_meter(self, meter: GaroMeter | None, get_voltage: Callable[[], int]) -> GaroMeter:
+        return await self._async_get_meter('meterinfo/CENTRAL101', meter, get_voltage)
     
-    async def _async_get_meter(self, endpoint:str, meter: GaroMeter | None = None) -> GaroMeter:
+    async def _async_get_meter(self, endpoint:str, meter: GaroMeter | None, get_voltage: Callable[[], int]) -> GaroMeter:
         await self._async_load_meter_info()
         response = await self._async_get(endpoint)
         data = await response.json()
+        _LOGGER.debug(f"Got meter info {data}")
         if meter is None:
             meter = GaroMeter(data, self._current_divider, self._power_divider)
         else:
             meter.load(data)
+        meter.calculate_predicted_hour_consumption(get_voltage())
         return meter
 		
     async def async_get_schema(self):
@@ -101,6 +105,7 @@ class ApiClient:
         
     
     async def async_set_mode(self, mode: const.Mode | str):
+        _LOGGER.debug(f"API set mode to {mode}")
         if isinstance(mode, str):
             if mode.upper() == 'ON':
                 mode = const.Mode.ON

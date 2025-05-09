@@ -7,7 +7,6 @@ import voluptuous as vol
 
 
 from homeassistant.core import HomeAssistant
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature, UnitOfElectricCurrent, UnitOfEnergy, UnitOfPower, UnitOfTime
 from homeassistant.components.sensor import (
     SensorEntity,
@@ -35,14 +34,14 @@ class GaroSensorEntityDescription(SensorEntityDescription):
 
 @dataclass(frozen=True, kw_only=True)
 class GaroChargerSensorEntityDescription(SensorEntityDescription):
-    """Describes Garo sensor entity."""
+    """Describes Garo charger sensor entity."""
     get_state: Callable[[GaroCharger], Any]
 
 @dataclass(frozen=True, kw_only=True)
 class GaroMeterSensorEntityDescription(SensorEntityDescription):
-    """Describes Garo sensor entity."""
+    """Describes Garo meter sensor entity."""
     get_state: Callable[[GaroMeter], Any]
-
+    get_attributes: Callable[[GaroMeter], dict] = lambda meter: {}
 
 async def async_setup_entry(hass: HomeAssistant, entry: GaroConfigEntry, async_add_entities):
     """Set up using config_entry."""
@@ -52,7 +51,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: GaroConfigEntry, async_a
             GaroSensorEntityDescription(
                 key="status",
                 translation_key="status",
-                name="Status",
+                name="Connector Status",
+                icon="mdi:ev-plug-type2",
                 options=[opt.value for opt in const.Connector],
                 device_class=SensorDeviceClass.ENUM,
                 state_class=None,
@@ -318,6 +318,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GaroConfigEntry, async_a
             ),
         ])
     entities.append(
+        # the sensor that displays the charger's current mode
         GaroLegacySensorEntity(
             coordinator,
             entry,
@@ -499,6 +500,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: GaroConfigEntry, async_a
                     state_class=SensorStateClass.TOTAL_INCREASING,
                     native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
                     get_state=lambda meter: meter.accumulated_energy,
+                ),
+                GaroMeterSensorEntityDescription(
+                    key="meter_accumulated_energy_hour",
+                    translation_key="meter_accumulated_energy_hour",
+                    name="Energy consumption (hour)",
+                    device_class=SensorDeviceClass.ENERGY,
+                    state_class=SensorStateClass.TOTAL_INCREASING,
+                    native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+                    get_state=lambda meter: round(meter.accumulated_energy - meter.accumulated_energy_at_start_of_hour, 2),
+                    get_attributes=lambda meter: {"prediction": meter.predicted_hour_consumption}
                 )])
 
         if meter_coordinator.has_external_meter:
@@ -586,6 +597,10 @@ class GaroChargerSensorEntity(GaroEntity, SensorEntity):
         self._attr_native_value = self.entity_description.get_state(self._charger)
 
 class GaroMeterSensorEntity(GaroMeterEntity, SensorEntity):
+    @property
+    def extra_state_attributes(self):
+        """Return the state attributes of the sensor."""
+        return self.entity_description.get_attributes(self._meter)  # TODO, why a warning from PyCharm?
 
     entity_description: GaroMeterSensorEntityDescription
 
@@ -638,7 +653,7 @@ class GaroScheduleSensorEntity(GaroEntity, SensorEntity):
         } for entry in self._entries]
 
     @property
-    def state_attributes(self):
+    def state_attributes(self):  # TODO, should not be overridden
         """Return the data of the entity."""
         output = {
             "entries": self.entries,

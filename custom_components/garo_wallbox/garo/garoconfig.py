@@ -62,3 +62,5 @@ class GaroConfig:
     def has_load_balancer(self):
         return self.local_load_balanced or self.group_load_balanced or self.group_load_balanced101
 
+    def __repr__(self):
+        return str(self.__dict__)

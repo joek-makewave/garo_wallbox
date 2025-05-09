@@ -3,7 +3,7 @@
 import asyncio
 from datetime import timedelta
 import logging
-from typing import Any, Dict
+from typing import Dict
 from dataclasses import dataclass
 
 from aiohttp import ClientConnectionError
@@ -11,17 +11,11 @@ from async_timeout import timeout
 
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    ATTR_NAME,
-    CONF_HOST,
-    CONF_NAME,
-)
+from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.entity import Entity
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .garo import ApiClient, GaroConfig
 from .coordinator import GaroDeviceCoordinator, GaroMeterCoordinator
@@ -52,6 +46,7 @@ async def async_setup(hass: HomeAssistant, config: Dict) -> bool:
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: GaroConfigEntry):
+    _LOGGER.debug(f"async_setup_entry with entry {entry}")
 
     session = async_get_clientsession(hass)
     host = entry.data[CONF_HOST]
@@ -59,6 +54,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GaroConfigEntry):
     try:
         with timeout(TIMEOUT):
             configuration = await api_client.async_get_configuration()
+            _LOGGER.debug(f"Configuration from API: {configuration}")
         coordinator = GaroDeviceCoordinator(hass, entry, api_client, configuration)
         await coordinator.async_config_entry_first_refresh()
         try:
@@ -71,12 +67,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: GaroConfigEntry):
         if configuration.has_load_balancer:
             meter_coordinator = GaroMeterCoordinator(hass, entry, api_client, configuration)
             await meter_coordinator.async_config_entry_first_refresh()
+            _LOGGER.debug(f"Meter {meter_coordinator.name} created from load balancer")
         entry.runtime_data = GaroRuntimeData(
             coordinator=coordinator,
             meter_coordinator=meter_coordinator 
         )
         device_registry = dr.async_get(hass)
-        device_registry.async_get_or_create(
+        device_entry = device_registry.async_get_or_create(
             config_entry_id=entry.entry_id,
             identifiers={(DOMAIN, coordinator.device_id)},
             manufacturer="Garo",
@@ -85,6 +82,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GaroConfigEntry):
             serial_number=str(coordinator.config.serial_number),
             sw_version=coordinator.config.package_version
         )
+        _LOGGER.debug(f"Main device {device_entry.name} {"create" if device_entry.is_new else "get"}")
         if configuration.has_slaves:
             for slave in coordinator.slaves:
                 slave_charger = coordinator.get_charger_device_info(slave)
@@ -94,21 +92,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: GaroConfigEntry):
                     manufacturer="Garo")
                 
         if configuration.has_load_balancer and meter_coordinator is not None:
+            device_entry = None
             if meter_coordinator.has_external_meter:
-                device_registry.async_get_or_create(
+                device_entry = device_registry.async_get_or_create(
                     config_entry_id=entry.entry_id,
                     identifiers=meter_coordinator.get_device_info(meter_coordinator.external_meter).get("identifiers"),
                     manufacturer="Garo")
             if meter_coordinator.has_central100_meter:
-                device_registry.async_get_or_create(
+                device_entry = device_registry.async_get_or_create(
                     config_entry_id=entry.entry_id,
                     identifiers=meter_coordinator.get_device_info(meter_coordinator.central100_meter).get("identifiers"),
                     manufacturer="Garo")
             if meter_coordinator.has_central101_meter:
-                device_registry.async_get_or_create(
+                device_entry = device_registry.async_get_or_create(
                     config_entry_id=entry.entry_id,
                     identifiers=meter_coordinator.get_device_info(meter_coordinator.central101_meter).get("identifiers"),
                     manufacturer="Garo")
+            if device_entry:
+                _LOGGER.debug(f"Meter device {device_entry.name} {"create" if device_entry.is_new else "get"}")
 
         await hass.config_entries.async_forward_entry_setups(entry, COMPONENT_TYPES)
         return True
@@ -118,8 +119,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: GaroConfigEntry):
     except ClientConnectionError:
         _LOGGER.debug("ClientConnectionError to %s", host)
         raise ConfigEntryNotReady
-    except Exception:  # pylint: disable=broad-except
-        _LOGGER.error("Unexpected error creating device %s", host)
+    except Exception as exc:  # pylint: disable=broad-except
+        _LOGGER.error("Unexpected error creating device %s", host, exc_info=exc)
         return False
 
 
@@ -127,7 +128,7 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     """Unload a config entry."""
     return await hass.config_entries.async_unload_platforms(entry, COMPONENT_TYPES)
 
-async def garo_setup(hass: HomeAssistant, entry: ConfigEntry):
+async def garo_setup(hass: HomeAssistant, entry: ConfigEntry):  # when is this used?
     """Create a Garo instance only once."""
     session = async_get_clientsession(hass)
     host = entry.data[CONF_HOST]

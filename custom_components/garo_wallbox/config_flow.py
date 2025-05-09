@@ -4,7 +4,6 @@ import logging
 from typing import Any, Dict, Optional
 
 from aiohttp import ClientConnectionError
-from async_timeout import timeout
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -54,9 +53,9 @@ class FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         session = async_get_clientsession(self.hass)
         api_client = ApiClient(session, host)
         try:
-            with timeout(TIMEOUT):
+            async with asyncio.timeout(TIMEOUT):
                 await api_client.async_get_configuration()
-            return await self._create_entry(host, name,device_fetch_interval, meter_fetch_interval)
+            return await self._create_entry(host, name, device_fetch_interval, meter_fetch_interval)
         except asyncio.TimeoutError:
             _LOGGER.debug("Connection to %s timed out", host)
             return self.async_abort(reason="device_timeout")

@@ -1,4 +1,5 @@
 from . import const, utils
+from .const import Mode
 from .garocharger import GaroCharger
 
 class GaroStatus:
@@ -7,6 +8,7 @@ class GaroStatus:
         self._serial_number = 0
         self._connector = const.Connector.UNKNOWN
         self._mode = const.Mode.OFF
+        self._selected_mode = None
         self._current_limit = 0
         self._factory_current_limit = 0
         self._switch_current_limit = 0
@@ -52,6 +54,9 @@ class GaroStatus:
         if 'twinCharger' in json and self._twin_charger.load(json['twinCharger']):
             self._has_changed = True
 
+        if self._selected_mode is None:
+            self.selected_mode = self.mode
+
         return self._has_changed
     
     @property
@@ -94,6 +99,17 @@ class GaroStatus:
         if self._mode == value:
             return
         self._mode = value
+        self._has_changed = True
+
+    @property
+    def selected_mode(self):
+        return self._selected_mode or Mode.OFF
+    @selected_mode.setter
+    def selected_mode(self, value):
+        if self._selected_mode == value:
+            return
+        assert isinstance(value, Mode)
+        self._selected_mode = value
         self._has_changed = True
 
     @property
@@ -230,3 +246,6 @@ class GaroStatus:
             return
         self._pilot_level = value
         self._has_changed = True
+
+    def __repr__(self):
+        return str(self.__dict__)

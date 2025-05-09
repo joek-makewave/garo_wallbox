@@ -8,7 +8,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.storage import Store
 
-from .garo import ApiClient, GaroConfig, GaroStatus, GaroCharger, GaroMeter, GaroSchema
+from .garo import ApiClient, GaroConfig, GaroStatus, GaroCharger, GaroMeter, GaroSchema, GaroLimiter
 from .garo.const import CableLockMode, PRODUCT_MAP, GaroProductInfo, Mode as GaroMode
 from . import const
 
@@ -16,6 +16,8 @@ _LOGGER = logging.getLogger(__name__)
 
 METER_CALCULATE_POWER = 'meter_calculate_power'
 METER_VOLTAGE = 'meter_voltage'
+METER_HOUR_LIMIT = 'meter_hour_limit'
+METER_HOURLY_ENERGY_LIMIT = 'meter_hourly_energy_limit'
 
 class GaroDeviceCoordinator(DataUpdateCoordinator[int]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, api_client: ApiClient, config: GaroConfig) -> None:
@@ -32,10 +34,9 @@ class GaroDeviceCoordinator(DataUpdateCoordinator[int]):
         self._api_client = api_client
         self._id = f"garo_{config.serial_number}"
         self._status: GaroStatus | None = None
-        self._name = self._config.master_charger.reference or entry.data[CONF_NAME]
+        self._name = entry.data[CONF_NAME] or self._config.master_charger.reference  # conf_name over native name
         self._slaves = self._config.slaves
         self._schema: list[GaroSchema] = []
-
 
         self._update_id = 0
 
@@ -56,7 +57,14 @@ class GaroDeviceCoordinator(DataUpdateCoordinator[int]):
     @property
     def config(self) -> GaroConfig:
         return self._config
-       
+
+    @property
+    def limiter(self) -> GaroLimiter | None:
+        if hasattr(self._entry, "runtime_data"):
+            if mc := self._entry.runtime_data.meter_coordinator:
+                return mc.limiter
+        return None
+
     @property
     def main_charger_name(self) -> str:
         return self._name
@@ -75,14 +83,14 @@ class GaroDeviceCoordinator(DataUpdateCoordinator[int]):
             identifiers={(const.DOMAIN, str(self._id) )},
             manufacturer="Garo",
             model=self._config.product.name,
-            name=self.main_charger_name,
+            name=self.main_charger_name,  # resolves to conf_name
             serial_number=str(self._config.serial_number),
             sw_version=self._config.package_version,
             hw_version=f"{self._config.firmware_version}.{self._config.firmware_revision}"
         )
     
 
-    
+
     def get_charger_device_info(self, charger: GaroCharger)->DeviceInfo:
         product = self.get_product_info(charger)
         return DeviceInfo(            
@@ -138,8 +146,14 @@ class GaroDeviceCoordinator(DataUpdateCoordinator[int]):
         await self._api_client.async_remove_schema(id)
         await self.async_fetch_schema()
         
-    async def async_set_mode(self, mode: GaroMode | str):
-        await self._api_client.async_set_mode(mode)
+    async def async_set_mode(self, mode: GaroMode):
+        _LOGGER.info(f"setting mode to {mode}")
+        self._status.selected_mode = mode
+        if self.limiter:  # if we have a limiter, let it decide if mode should be set or not
+            if new_mode := self.limiter.get_mode_from_selected_mode(mode):
+                await self._api_client.async_set_mode(new_mode)
+        else:
+            await self._api_client.async_set_mode(mode)
         await self.async_request_refresh()
 
     async def async_set_current_limit(self, limit: int):
@@ -150,6 +164,7 @@ class GaroDeviceCoordinator(DataUpdateCoordinator[int]):
     async def _fetch_device_data(self)->int:
         try:
             self._status = await self._api_client.async_get_status(self._status)
+            _LOGGER.debug(f"Status from API: {self._status}")
             has_changed = self._status.has_changed
             if (self._config.has_slaves):
                 await self._api_client.async_get_slaves(self._slaves)
@@ -157,8 +172,11 @@ class GaroDeviceCoordinator(DataUpdateCoordinator[int]):
                     if slave.has_changed:
                         has_changed = True
                         break
-            if has_changed:
+            if has_changed or self.limiter and not self.limiter.is_initialized():
                 self._update_id += 1
+                if self.limiter:
+                    if new_mode := self.limiter.get_mode_from_status(self._status):
+                        await self.api_client.async_set_mode(new_mode)
         except BaseException as e:
             _LOGGER.error("Error fetching device data from API: %s", e, exc_info=e)
             raise UpdateFailed(f"Invalid response from API: {e}") from e
@@ -180,9 +198,10 @@ class GaroMeterCoordinator(DataUpdateCoordinator[int]):
         self._external_meter: GaroMeter | None = None
         self._central100_meter: GaroMeter | None = None
         self._central101_meter: GaroMeter | None = None
+        self._limiter = None
         self._store = Store(hass, version=1, key="garo_meter")
         self._stored_data: dict|None = None
-        
+
         self._update_id = 0
 
     @property
@@ -213,6 +232,10 @@ class GaroMeterCoordinator(DataUpdateCoordinator[int]):
         return self._central101_meter
     
     @property
+    def limiter(self)->GaroLimiter | None:
+        return self._limiter
+
+    @property
     def calculate_power(self)->bool:
         if self._stored_data is None:
             raise ValueError("Stored data is not initialized")        
@@ -223,7 +246,19 @@ class GaroMeterCoordinator(DataUpdateCoordinator[int]):
         if self._stored_data is None:
             raise ValueError("Stored data is not initialized")
         return int(self._stored_data[METER_VOLTAGE]) if METER_VOLTAGE in self._stored_data else 230
-    
+
+    @property
+    def hour_limit(self) -> bool:
+        if self._stored_data is None:
+            raise ValueError("Stored data is not initialized")
+        return self._stored_data.get(METER_HOUR_LIMIT, False)
+
+    @property
+    def hourly_energy_limit(self) -> float:
+        if self._stored_data is None:
+            raise ValueError("Stored data is not initialized")
+        return self._stored_data.get(METER_HOURLY_ENERGY_LIMIT, 6)
+
     def get_device_info(self, meter: GaroMeter)->DeviceInfo:
         
         return DeviceInfo(            
@@ -252,28 +287,56 @@ class GaroMeterCoordinator(DataUpdateCoordinator[int]):
         await self._store.async_save(self._stored_data)
         self.async_update_listeners()
 
+    async def async_set_hour_limit(self, hour_limit:bool):
+        """Set hour limit on/off."""
+        if self._stored_data is None:
+            raise ValueError("Stored data is not initialized")
+        _LOGGER.debug(f"Setting hour limit to {hour_limit}")
+        if new_mode := self._limiter.get_mode_from_limit(hour_limit):
+            await self._api_client.async_set_mode(new_mode)
+        self._stored_data[METER_HOUR_LIMIT] = hour_limit
+        await self._store.async_save(self._stored_data)
+        self.async_update_listeners()
+
+    async def async_set_hourly_energy_limit(self, energy_limit:float):
+        """Set limit for max energy consumption per hour."""
+        if self._stored_data is None:
+            raise ValueError("Stored data is not initialized")
+        _LOGGER.debug(f"Setting houry energy limit to {energy_limit}")
+        if new_mode := self._limiter.get_mode_from_energy_limit(energy_limit):
+            await self._api_client.async_set_mode(new_mode)
+        self._stored_data[METER_HOURLY_ENERGY_LIMIT] = energy_limit
+        await self._store.async_save(self._stored_data)
+        self.async_update_listeners()
 
     async def _fetch_device_data(self)->int:
         try:
             has_changed = False
             if not self._stored_data:
                 self._stored_data = await self._store.async_load() or {}
+                self._limiter = GaroLimiter(self.hour_limit, self.hourly_energy_limit)
                 _LOGGER.debug("Loaded stored data: %s", self._stored_data)
+            meter: GaroMeter | None = None
+            voltage = lambda: self.voltage if self.calculate_power else None
             if self._config.local_load_balanced:
-                self._external_meter = await self._api_client.async_get_external_meter(self._external_meter)
+                self._external_meter = meter = await self._api_client.async_get_external_meter(self._external_meter, voltage)
                 if self._external_meter.has_changed:
                     has_changed = True
             if self._config.group_load_balanced:
-                self._central100_meter = await self._api_client.async_get_central100_meter(self._central100_meter)
+                self._central100_meter = meter = await self._api_client.async_get_central100_meter(self._central100_meter, voltage)
                 if self._central100_meter.has_changed:
                     has_changed = True
             if self._config.group_load_balanced101:
-                self._central101_meter = await self._api_client.async_get_central101_meter(self._central101_meter)
+                self._central101_meter = meter = await self._api_client.async_get_central101_meter(self._central101_meter, voltage)
                 if self._central101_meter.has_changed:
                     has_changed = True
             
             if has_changed:
                 self._update_id += 1
+                if meter:
+                    if new_mode := self._limiter.get_mode_from_prediction_and_minute(meter.predicted_hour_consumption, meter.minute):
+                        await self._api_client.async_set_mode(new_mode)
+
         except BaseException as e:
             _LOGGER.error("Error fetching meter data from API: %s", e, exc_info=e)
             raise UpdateFailed(f"Invalid response from API: {e}") from e

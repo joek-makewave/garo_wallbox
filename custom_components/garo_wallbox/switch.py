@@ -3,13 +3,11 @@ from dataclasses import dataclass
 
 from homeassistant.core import HomeAssistant
 from homeassistant.const import EntityCategory
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 
 
 from .coordinator import GaroDeviceCoordinator, GaroMeterCoordinator
 from .base import GaroEntity, GaroMeter, GaroMeterEntity
-from .const import DOMAIN,COORDINATOR
 from . import GaroConfigEntry
 
 @dataclass(frozen=True, kw_only=True)
@@ -48,7 +46,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: GaroConfigEntry, async_a
                     on_func=lambda: meter_coordinator.async_set_calculate_power(True),
                     off_func=lambda: meter_coordinator.async_set_calculate_power(False),
                     get_state=lambda: meter_coordinator.calculate_power,
-                    )])
+                    ),
+                GaroSwitchEntityDescription(
+                    key="meter_limit_hourly",
+                    translation_key="meter_limit_hourly",
+                    name="Limit hourly total consumption",
+                    icon="mdi:home-lightning-bolt",
+                    on_func=lambda: meter_coordinator.async_set_hour_limit(True),
+                    off_func=lambda: meter_coordinator.async_set_hour_limit(False),
+                    get_state=lambda: meter_coordinator.hour_limit,
+                ),
+            ])
         if meter_coordinator.has_external_meter:
             add_meter_entities(meter_coordinator.external_meter)
         if meter_coordinator.has_central100_meter:

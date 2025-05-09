@@ -4,18 +4,15 @@ from dataclasses import dataclass
 
 from homeassistant.core import HomeAssistant
 from homeassistant.const import EntityCategory
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.number import (
-    NumberDeviceClass,
     NumberEntity,
     NumberEntityDescription,
     NumberMode,
 )
 
-from .garo import GaroStatus, const
+from .garo import GaroStatus
 from .coordinator import GaroDeviceCoordinator, GaroMeterCoordinator
 from .base import GaroEntity, GaroMeterEntity, GaroMeter
-from .const import DOMAIN,COORDINATOR
 from . import GaroConfigEntry
 
 @dataclass(frozen=True, kw_only=True)
@@ -28,8 +25,8 @@ class GaroNumberEntityDescription(NumberEntityDescription):
 @dataclass(frozen=True, kw_only=True)
 class GaroMeterNumberEntityDescription(NumberEntityDescription):
     """Describes Garo Number entity."""
-    get_value: Callable[[GaroMeter], int]
-    set_value: Callable[[int], Awaitable]
+    get_value: Callable[[GaroMeter], int|float]
+    set_value: Callable[[int|float], Awaitable]
     is_available: Callable[[], bool] | None = None
 
 async def async_setup_entry(hass: HomeAssistant, entry: GaroConfigEntry, async_add_entities):
@@ -70,7 +67,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: GaroConfigEntry, async_a
                     get_value=lambda status: meter_coordinator.voltage,
                     set_value=lambda value: meter_coordinator.async_set_voltage(value),
                     is_available=lambda: True,
-                    )])
+                    ),
+                GaroMeterNumberEntityDescription(
+                    key="meter_hourly_consumption_limit",
+                    translation_key="meter_hourly_consumption_limit",
+                    name="Hourly consumption limit",
+                    icon="mdi:lightning-bolt-outline",
+                    native_max_value=99.9,
+                    native_min_value=0,
+                    native_step=0.1,
+                    native_unit_of_measurement="kWh",
+                    mode=NumberMode.BOX,
+                    get_value=lambda status: meter_coordinator.hourly_energy_limit,
+                    set_value=lambda value: meter_coordinator.async_set_hourly_energy_limit(value),
+                    is_available=lambda: meter_coordinator.hour_limit,
+                ),
+            ])
         if meter_coordinator.has_external_meter:
             add_meter_entities(meter_coordinator.external_meter)
         if meter_coordinator.has_central100_meter:
@@ -118,7 +130,6 @@ class GaroMeterNumberEntity(GaroMeterEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
-        value = int(value)
         await self.entity_description.set_value(value)
         self._attr_native_value = value
         self.async_write_ha_state()

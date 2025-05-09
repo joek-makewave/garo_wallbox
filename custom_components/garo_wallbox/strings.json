@@ -40,7 +40,7 @@
         }
       },
       "status": {
-        "name": "Status",
+        "name": "Connector Status",
         "state": {
           "CHANGING": "...",
           "NOT_CONNECTED": "Vehicle not connected",
@@ -99,6 +99,9 @@
       },
       "current_temperature": {
         "name": "Temperature"
+      },
+      "meter_accumulated_energy_hour": {
+        "name": "Energy consumption (hour)"
       },
       "left_status": {
         "name": "Left Outlet",
@@ -241,11 +244,17 @@
     "number": {
       "current_limit": {
         "name": "Current Limit"
+      },
+      "meter_hourly_consumption_limit": {
+        "name": "Hourly Consumption Limit"
       }
     },
     "switch": {
       "charge_limit": {
         "name": "Charge Limiter"
+      },
+      "meter_limit_hourly": {
+        "name": "Limit hourly total consumption"
       }
     }
   }

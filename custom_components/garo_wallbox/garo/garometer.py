@@ -1,8 +1,14 @@
+import logging
+
+from homeassistant.util.dt import now
+
 from . import utils
+
+_LOGGER = logging.getLogger(__name__)
 
 class GaroMeter:
     def __init__(
-            self, 
+            self,
             json = None,
             current_divider = 1,
             power_divider = 1):
@@ -19,7 +25,9 @@ class GaroMeter:
         self._l3_power = 0.0
         self._apparent_power = 0.0
         self._accumulated_energy = 0.0
-
+        self._minute = None
+        self._accumulated_energy_at_start_of_hour = 0.0
+        self._predicted_hour_consumption = 0.0
         self._has_changed = False
         self.load(json)
 
@@ -39,9 +47,27 @@ class GaroMeter:
         self.l3_power = utils.read_value(json, 'phase3InstPower', self._l3_power)
         self.apparent_power = utils.read_value(json, 'apparentPower', self._apparent_power)
         self.accumulated_energy = utils.read_value(json, 'accEnergy', self._accumulated_energy)
-        
+
+        # TODO, is it possible to get the value of accumulated_energy at minute 0 from history?
+        minute = now().minute
+        if self._minute is None:
+            self.accumulated_energy_at_start_of_hour = self._accumulated_energy
+            _LOGGER.debug(f"Initializing, minute is {minute} setting energy soh to {self._accumulated_energy_at_start_of_hour}")
+        elif minute < self._minute:
+            self.accumulated_energy_at_start_of_hour = self._accumulated_energy
+            _LOGGER.debug(f"minute: {minute}, self.minute: {self._minute}, soh: {self._accumulated_energy_at_start_of_hour}")
+        self.minute = minute
+
         return self._has_changed
-    
+
+    def calculate_predicted_hour_consumption(self, voltage: int | None) -> None:
+        energy_so_far = self.accumulated_energy - self.accumulated_energy_at_start_of_hour
+        if voltage is not None:
+            power = (self.l1_current + self.l2_current + self.l3_current) / 1000 * voltage
+        else:
+            power = self.apparent_power
+        self.predicted_hour_consumption = energy_so_far + power * (60 - self._minute or 0) / 60
+
     @property
     def has_changed(self):
         return self._has_changed
@@ -144,4 +170,34 @@ class GaroMeter:
         if self._accumulated_energy == value:
             return
         self._accumulated_energy = value
+        self._has_changed = True
+
+    @property
+    def minute(self):
+        return self._minute
+    @minute.setter
+    def minute(self, value):
+        if self._minute == value:
+            return
+        self._minute = value
+        self._has_changed = True
+
+    @property
+    def accumulated_energy_at_start_of_hour(self):
+        return self._accumulated_energy_at_start_of_hour / 1000
+    @accumulated_energy_at_start_of_hour.setter
+    def accumulated_energy_at_start_of_hour(self, value):
+        if self._accumulated_energy_at_start_of_hour == value:
+            return
+        self._accumulated_energy_at_start_of_hour = value
+        self._has_changed = True
+
+    @property
+    def predicted_hour_consumption(self):
+        return self._predicted_hour_consumption
+    @predicted_hour_consumption.setter
+    def predicted_hour_consumption(self, value):
+        if self.predicted_hour_consumption == value:
+            return
+        self._predicted_hour_consumption = value
         self._has_changed = True
